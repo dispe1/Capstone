@@ -1,9 +1,12 @@
 package com.example.yusei.capstone;
 
+import android.app.ProgressDialog;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.media.MediaScannerConnection;
 import android.os.Bundle;
+import android.os.Environment;
 import android.support.annotation.NonNull;
 import android.support.design.widget.BottomNavigationView;
 import android.support.v7.app.AppCompatActivity;
@@ -20,14 +23,17 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.BitmapDrawable;
 import android.util.SparseArray;
+
 import com.google.android.gms.vision.Frame;
 import com.google.android.gms.vision.face.Face;
 import com.google.android.gms.vision.face.FaceDetector;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Calendar;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
@@ -40,11 +46,14 @@ import okhttp3.Response;
 
 public class imageEdit extends AppCompatActivity {
     private ImageView editview;
+    private static final String IMAGE_DIRECTORY = "/capstone";
     private Bitmap decodedByte;
     private Bitmap decodedByte2;
+    private Bitmap resultBmp;
     private float x1;
     private float y1;
     private int length;
+    private ProgressDialog loading;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -55,14 +64,13 @@ public class imageEdit extends AppCompatActivity {
         getSupportActionBar().setDisplayShowTitleEnabled(false);
         editview = (ImageView) findViewById(R.id.picture);
 
-        final Bitmap tempBitmap = Bitmap.createBitmap(MainActivity.editimage.getWidth(), MainActivity.editimage.getHeight(), Bitmap.Config.RGB_565);
-        Canvas tempCanvas = new Canvas(tempBitmap);
-        tempCanvas.drawBitmap(MainActivity.editimage, 0, 0, null);
+        editview.setImageDrawable(new BitmapDrawable(getResources(), MainActivity.editimage));
+        resultBmp = MainActivity.editimage.copy(MainActivity.editimage.getConfig(), true);
 
         FaceDetector faceDetector = new
                 FaceDetector.Builder(getApplicationContext()).setTrackingEnabled(false)
                 .build();
-        if(!faceDetector.isOperational()){
+        if (!faceDetector.isOperational()) {
             Toast.makeText(getBaseContext(), "Face Detector Not build!", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -70,30 +78,24 @@ public class imageEdit extends AppCompatActivity {
         Frame frame = new Frame.Builder().setBitmap(MainActivity.editimage).build();
         SparseArray<Face> faces = faceDetector.detect(frame);
 
-        if(faces.size() == 0)
-        {
+        if (faces.size() == 0) {
             Toast.makeText(getBaseContext(), "얼굴이 감지 안됨", Toast.LENGTH_SHORT).show();
-        }
-        else
-        {
-            for(int i=0; i<faces.size(); i++) {
-                Face thisFace = faces.valueAt(i);
-                x1 = thisFace.getPosition().x + (float) 0.12*thisFace.getWidth();
-                y1 = thisFace.getPosition().y + thisFace.getHeight() - (float)0.76*thisFace.getWidth();
-                float x2 = x1 + (float)0.76*thisFace.getWidth();
-                float y2 = y1 + (float)0.76*thisFace.getWidth();
-                length = (int)(0.76*thisFace.getWidth());
+            finish();
+        } else {
+            Face thisFace = faces.valueAt(0);
+            x1 = thisFace.getPosition().x + (float) 0.12 * thisFace.getWidth();
+            y1 = thisFace.getPosition().y + thisFace.getHeight() - (float) 0.76 * thisFace.getWidth();
+            float x2 = x1 + (float) 0.76 * thisFace.getWidth();
+            float y2 = y1 + (float) 0.76 * thisFace.getWidth();
+            length = (int) (0.76 * thisFace.getWidth());
 
-                // 얼굴 크로핑 후 128픽셀로 변환
-                Bitmap cropFace = Bitmap.createBitmap(MainActivity.editimage, (int)x1, (int)y1, length, length);
-                cropFace = createScaledBitmap(cropFace, 128, 128);
-                // 크로핑한 얼굴 서버에 업로드
-                uploadPhoto(cropFace);
-                // 비트맵 할당 해제
-                cropFace.recycle();
-                editview.setImageDrawable(new BitmapDrawable(getResources(),decodedByte));
-
-            }
+            // 얼굴 크로핑 후 128픽셀로 변환
+            Bitmap cropFace = Bitmap.createBitmap(MainActivity.editimage, (int) x1, (int) y1, length, length);
+            cropFace = createScaledBitmap(cropFace, 128, 128);
+            // 크로핑한 얼굴 서버에 업로드
+            uploadPhoto(cropFace);
+            // 비트맵 할당 해제
+            cropFace.recycle();
         }
         BottomNavigationView bottomNavigationView =
                 (BottomNavigationView) findViewById(R.id.bottom_navigation);
@@ -110,7 +112,8 @@ public class imageEdit extends AppCompatActivity {
                     case R.id.action_original:          // 원본 버튼 클릭 시
                         Toast.makeText(imageEdit.this, item.getTitle(), Toast.LENGTH_SHORT).show();
                         // 이미지 뷰에 원본 이미지 설정
-                        editview.setImageDrawable(new BitmapDrawable(getResources(),tempBitmap));
+                        resultBmp = MainActivity.editimage.copy(MainActivity.editimage.getConfig(), true);
+                        editview.setImageDrawable(new BitmapDrawable(getResources(), resultBmp));
                         break;
                     case R.id.action_age:               // 나이 버튼 클릭 시
                         PopupMenu popup1 = new PopupMenu(imageEdit.this, findViewById(R.id.action_age));
@@ -223,41 +226,45 @@ public class imageEdit extends AppCompatActivity {
         if (id == R.id.action_back) {
             finish();
             return true;
+        } else if (id == R.id.action_save) {
+            saveImage(resultBmp);
+            return true;
         }
         return super.onOptionsItemSelected(item);
     }
 
-    public void age_option(int index){
+    public void age_option(int index) {
         Bitmap cropBitmap = Bitmap.createBitmap(decodedByte, index, 0, 128, 128);
-        Bitmap resultBmp = Bitmap.createBitmap(MainActivity.editimage.getWidth(), MainActivity.editimage.getHeight(), Bitmap.Config.RGB_565);
-        cropBitmap = createScaledBitmap(cropBitmap, length,  length);
+        cropBitmap = createScaledBitmap(cropBitmap, length, length);
         Canvas canvas = new Canvas(resultBmp);
-        canvas.drawBitmap(MainActivity.editimage, 0, 0, null);
         canvas.drawBitmap(cropBitmap, x1, y1, null);
-        editview.setImageDrawable(new BitmapDrawable(getResources(),resultBmp));
+        editview.setImageDrawable(new BitmapDrawable(getResources(), resultBmp));
         cropBitmap.recycle();
     }
 
-    public void emotion_option(int index){
+    public void emotion_option(int index) {
         Bitmap cropBitmap = Bitmap.createBitmap(decodedByte2, index + 2, 2, 124, 124);
-        Bitmap resultBmp = Bitmap.createBitmap(MainActivity.editimage.getWidth(), MainActivity.editimage.getHeight(), Bitmap.Config.RGB_565);
-        cropBitmap = createScaledBitmap(cropBitmap, length,  length);
+        cropBitmap = createScaledBitmap(cropBitmap, length, length);
         Canvas canvas = new Canvas(resultBmp);
-        canvas.drawBitmap(MainActivity.editimage, 0, 0, null);
         canvas.drawBitmap(cropBitmap, x1, y1, null);
-        editview.setImageDrawable(new BitmapDrawable(getResources(),resultBmp));
+        editview.setImageDrawable(new BitmapDrawable(getResources(), resultBmp));
         cropBitmap.recycle();
     }
 
     public String uploadPhoto(Bitmap cropBitmap) {
+        loading = new ProgressDialog(imageEdit.this);
+        loading.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+        loading.setMessage("로딩중입니다..");
+        loading.show();
+
         File storage = imageEdit.this.getCacheDir(); // 이 부분이 임시파일 저장 경로
         String fileName = "photo.png";  // 파일이름은 마음대로!
-        File tempFile = new File(storage,fileName);
+        File tempFile = new File(storage, fileName);
 
-        try{
+        try {
             tempFile.createNewFile();  // 파일을 생성해주고
             FileOutputStream out = new FileOutputStream(tempFile);
-            cropBitmap.compress(Bitmap.CompressFormat.PNG, 100 , out);  // 넘거 받은 bitmap을 jpeg(손실압축)으로 저장해줌
+            cropBitmap.compress(Bitmap.CompressFormat.PNG, 100, out);  // 넘거 받은 bitmap을 jpeg(손실압축)으로 저장해줌
             out.close(); // 마무리로 닫아줍니다.
 
         } catch (FileNotFoundException e) {
@@ -295,7 +302,7 @@ public class imageEdit extends AppCompatActivity {
     }
 
 
-    private static Bitmap createScaledBitmap(Bitmap bitmap,int newWidth,int newHeight) {
+    private static Bitmap createScaledBitmap(Bitmap bitmap, int newWidth, int newHeight) {
         Bitmap scaledBitmap = Bitmap.createBitmap(newWidth, newHeight, bitmap.getConfig());
 
         float scaleX = newWidth / (float) bitmap.getWidth();
@@ -319,14 +326,15 @@ public class imageEdit extends AppCompatActivity {
         @Override
         public void onFailure(Call call, IOException e) {
             Log.d("TEST", "ERROR Message : " + e.getMessage());
+            loading.dismiss();
+            finish();
         }
 
         @Override
         public void onResponse(Call call, Response response) throws IOException {
             final String responseData = response.body().string();
-            decodedByte = BitmapFactory.decodeByteArray(Base64.decode(responseData, 0), 0, Base64.decode(responseData, 0).length);
             Log.d("TEST", "responseData : " + responseData);
-
+            decodedByte = BitmapFactory.decodeByteArray(Base64.decode(responseData, 0), 0, Base64.decode(responseData, 0).length);
         }
     };
 
@@ -334,14 +342,44 @@ public class imageEdit extends AppCompatActivity {
         @Override
         public void onFailure(Call call, IOException e) {
             Log.d("TEST", "ERROR Message : " + e.getMessage());
+            loading.dismiss();
+            finish();
         }
 
         @Override
         public void onResponse(Call call, Response response) throws IOException {
             final String responseData = response.body().string();
-            decodedByte2 = BitmapFactory.decodeByteArray(Base64.decode(responseData, 0), 0, Base64.decode(responseData, 0).length);
             Log.d("TEST", "responseData : " + responseData);
-
+            decodedByte2 = BitmapFactory.decodeByteArray(Base64.decode(responseData, 0), 0, Base64.decode(responseData, 0).length);
+            loading.dismiss();
         }
     };
+
+    public String saveImage(Bitmap myBitmap) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        myBitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes);
+        File wallpaperDirectory = new File(
+                Environment.getExternalStorageDirectory() + IMAGE_DIRECTORY);
+        // have the object build the directory structure, if needed.
+        if (!wallpaperDirectory.exists()) {
+            wallpaperDirectory.mkdirs();
+        }
+        try {
+            File f = new File(wallpaperDirectory, Calendar.getInstance()
+                    .getTimeInMillis() + ".png");
+            f.createNewFile();
+            FileOutputStream fo = new FileOutputStream(f);
+            fo.write(bytes.toByteArray());
+            MediaScannerConnection.scanFile(this,
+                    new String[]{f.getPath()},
+                    new String[]{"image/png"}, null);
+            fo.close();
+            Log.d("TAG", "File Saved::--->" + f.getAbsolutePath());
+            Toast.makeText(getBaseContext(), "저장 완료", Toast.LENGTH_SHORT).show();
+            return f.getAbsolutePath();
+        } catch (IOException e1) {
+            e1.printStackTrace();
+        }
+        return "";
+    }
 }
